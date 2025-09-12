@@ -1,62 +1,50 @@
-import { type ClientSchema, a, defineData } from "@aws-amplify/backend";
+import {type ClientSchema, a, defineData} from "@aws-amplify/backend";
 
-/*== STEP 1 ===============================================================
-The section below creates a Todo database table with a "content" field. Try
-adding a new "isDone" field as a boolean. The authorization rule below
-specifies that any user authenticated via an API key can "create", "read",
-"update", and "delete" any "Todo" records.
-=========================================================================*/
 const schema = a.schema({
-  Todo: a
-    .model({
-      content: a.string(),
-    })
-    .authorization(allow => [allow.owner()]),
-    //.authorization((allow) => [allow.publicApiKey()]),
-    
+    Shift: a
+        .model({
+            name: a.string(), // Name of the shift (e.g., "Shift 1", "Shift 2")
+            start: a.datetime(),
+            stop: a.datetime(),
+            routes: a.hasMany("Route", "shiftId"), // One-to-many relationship with Route
+        })
+        .authorization((allow) => [allow.owner()]),
+
+    Route: a
+        .model({
+            name: a.string(), // Optional field for route name
+            shiftId: a.string(), // Foreign key to Shift
+            shift: a.belongsTo("Shift", "shiftId"), // Belongs-to relationship with Shift
+            addresses: a.hasMany("Address", "routeId"), // One-to-many relationship with Address
+        })
+        .authorization((allow) => [allow.owner()]),
+
+    Address: a
+        .model({
+            fullAddress: a.string(),
+            notes: a.string(),
+            pictures: a.hasMany("Picture", "addressId"), // One-to-many relationship with Picture
+            route: a.belongsTo("Route", "routeId"), // Belongs-to relationship with Route
+            routeId: a.string(), // Foreign key to Route
+        })
+        .authorization((allow) => [allow.owner()]),
+
+    Picture: a
+        .model({
+            url: a.string(), // URL or path to the picture
+            description: a.string(), // Optional description of the picture
+            address: a.belongsTo("Address", "addressId"), // Belongs-to relationship with Address
+            addressId: a.string(), // Foreign key to Address
+
+        })
+        .authorization((allow) => [allow.owner()]),
 });
 
 export type Schema = ClientSchema<typeof schema>;
 
 export const data = defineData({
-  schema,
-  authorizationModes: {
-    
-    defaultAuthorizationMode: "userPool",
-
-    //defaultAuthorizationMode: "apiKey",
-    // API Key is used for a.allow.public() rules
-    // apiKeyAuthorizationMode: {
-    //   expiresInDays: 30,
-    // },
-  },
+    schema,
+    authorizationModes: {
+        defaultAuthorizationMode: "userPool",
+    },
 });
-
-/*== STEP 2 ===============================================================
-Go to your frontend source code. From your client-side code, generate a
-Data client to make CRUDL requests to your table. (THIS SNIPPET WILL ONLY
-WORK IN THE FRONTEND CODE FILE.)
-
-Using JavaScript or Next.js React Server Components, Middleware, Server 
-Actions or Pages Router? Review how to generate Data clients for those use
-cases: https://docs.amplify.aws/gen2/build-a-backend/data/connect-to-API/
-=========================================================================*/
-
-/*
-"use client"
-import { generateClient } from "aws-amplify/data";
-import type { Schema } from "@/amplify/data/resource";
-
-const client = generateClient<Schema>() // use this Data client for CRUDL requests
-*/
-
-/*== STEP 3 ===============================================================
-Fetch records from the database and use them in your frontend component.
-(THIS SNIPPET WILL ONLY WORK IN THE FRONTEND CODE FILE.)
-=========================================================================*/
-
-/* For example, in a React component, you can use this snippet in your
-  function's RETURN statement */
-// const { data: todos } = await client.models.Todo.list()
-
-// return <ul>{todos.map(todo => <li key={todo.id}>{todo.content}</li>)}</ul>
