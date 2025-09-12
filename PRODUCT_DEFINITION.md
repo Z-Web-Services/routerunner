@@ -16,7 +16,7 @@ RouteRunner is a web application designed for users who need to plan multi-stop 
 RouteRunner eliminates the complexity of managing multi-stop deliveries by providing:
 
 1. **Intelligent Address Input**: Multiple methods for adding addresses (voice, text, camera OCR)
-2. **Address Verification**: Google Geocoding API integration for accuracy
+2. **Smart Address Autocomplete**: Google Places API integration with real-time suggestions and validation
 3. **Comprehensive Documentation**: Detailed notes and multiple photos per stop
 4. **Route Optimization**: Google Maps integration for optimized multi-stop routes
 5. **Professional UI/UX**: Clean, modern interface built with Tailwind CSS
@@ -40,10 +40,12 @@ RouteRunner eliminates the complexity of managing multi-stop deliveries by provi
 - **Route Status Management**: Active vs completed route tracking
 
 ### 3. Multi-Modal Address Input & Management
-- **Voice Input**: Speech-to-text address entry for hands-free operation
-- **Text Input**: Traditional manual address entry with real-time validation
+- **Voice Input**: Speech-to-text address entry for hands-free operation with autocomplete
+- **Smart Text Input**: Real-time address suggestions powered by Google Places Autocomplete
 - **Camera OCR**: Extract addresses from documents/images using optical character recognition
-- **Address Verification**: Google Geocoding API validates and standardizes addresses
+- **Intelligent Address Validation**: Google Places API provides real-time suggestions, typo correction, and address standardization
+- **Interactive Autocomplete**: Dropdown suggestions with structured formatting (main text + secondary details)
+- **Debounced Search**: Optimized API calls with 300ms debounce for smooth user experience
 - **Comprehensive Notes System**: 
   - Add notes during address creation
   - Edit notes inline for existing addresses
@@ -118,10 +120,10 @@ User (Cognito)
 - Create routes within the active shift
 - Name routes for easy identification
 - Add addresses to each route using multiple input methods:
-  - Voice input for hands-free operation
-  - Manual text entry
+  - Voice input for hands-free operation with smart autocomplete
+  - Smart text entry with real-time Google Places suggestions
   - Camera OCR for document scanning
-- Address verification via Google Geocoding API
+- Intelligent address validation with Google Places API providing instant suggestions, typo correction, and address standardization
 
 ### 4. Field Work Execution
 - Navigate through addresses in each route
@@ -175,19 +177,42 @@ User (Cognito)
 - **Shift Management**: Full lifecycle from creation to completion with history
 - **Route Management**: Auto-generated naming and complete CRUD operations
 - **Multi-Modal Address Input**: Voice, text, and camera OCR functionality
+- **Google Places Autocomplete**: Real-time address suggestions with intelligent validation
 - **Address Notes System**: Add and edit notes inline for each address
 - **Google Maps Integration**: Route optimization with waypoint management
 - **Professional UI**: Tailwind CSS implementation with responsive design
 - **Navigation Flow**: Complete multi-page application flow
 
 ### 🔄 **In Progress**:
-- Google Geocoding API integration for address validation
 - Camera OCR text extraction (placeholder implementation)
 
 ### 📋 **Pending**:
 - Enhanced photo management with cloud storage
 - Advanced OCR integration (Tesseract.js or AWS Textract)
 - Performance optimizations
+
+## API Configuration Requirements
+
+### Google Places API Setup
+To enable the intelligent address autocomplete functionality:
+
+1. **Create Google Cloud Project**: Set up a new project in Google Cloud Console
+2. **Enable APIs**: Activate the following APIs:
+   - Places API (Autocomplete)
+   - Places API (Details)
+3. **Generate API Key**: Create a restricted API key with the following settings:
+   - **Application restrictions**: HTTP referrers (add your domain)
+   - **API restrictions**: Limit to Places API only
+4. **Environment Configuration**: Add API key to `.env.local`:
+   ```
+   VITE_GOOGLE_PLACES_API_KEY=your_api_key_here
+   ```
+
+### API Costs & Limits
+- **Free Tier**: $200 monthly credit (covers ~40,000 autocomplete requests)
+- **Autocomplete**: $2.83 per 1,000 requests (after free tier)
+- **Place Details**: $17 per 1,000 requests (after free tier)
+- **Optimization**: Debounced input (300ms) minimizes API calls
 
 ## Technical Requirements
 
@@ -208,7 +233,7 @@ User (Cognito)
 
 ## Competitive Advantages
 
-1. **Multiple Input Methods**: Voice, text, and OCR provide unmatched flexibility for address entry
+1. **Smart Address Input**: Voice, text, and OCR with Google Places Autocomplete provide unmatched flexibility and accuracy
 2. **Professional Design**: Tailwind CSS framework delivers a clean, modern interface
 3. **Complete Workflow**: End-to-end shift management from creation to completion
 4. **Intelligent Notes System**: Inline editing and comprehensive address documentation
