@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { Schema } from "../../amplify/data/resource";
 import { generateClient } from "aws-amplify/data";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 const client = generateClient<Schema>();
 
@@ -90,11 +90,11 @@ export default function ShiftEdit({ shift, onNavigateToRoute, onBack }: ShiftEdi
         </CardHeader>
         <CardContent>
           <div className="space-y-2 text-muted-foreground">
-            <p><span className="font-medium">Started:</span> {new Date(shift.start).toLocaleString()}</p>
+            <p><span className="font-medium">Started:</span> {new Date(shift.start || 0).toLocaleString()}</p>
             {shift.stop && (
               <>
-                <p><span className="font-medium">Ended:</span> {new Date(shift.stop).toLocaleString()}</p>
-                <p><span className="font-medium">Duration:</span> {Math.round((new Date(shift.stop).getTime() - new Date(shift.start).getTime()) / (1000 * 60))} minutes</p>
+                <p><span className="font-medium">Ended:</span> {new Date(shift.stop || 0).toLocaleString()}</p>
+                <p><span className="font-medium">Duration:</span> {Math.round((new Date(shift.stop || 0).getTime() - new Date(shift.start || 0).getTime()) / (1000 * 60))} minutes</p>
               </>
             )}
           </div>

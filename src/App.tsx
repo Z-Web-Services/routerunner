@@ -25,7 +25,7 @@ function App() {
     // Query for all shifts and separate active from completed
     client.models.Shift.observeQuery().subscribe({
       next: (data) => {
-        const shifts = [...data.items].sort((a, b) => new Date(b.start).getTime() - new Date(a.start).getTime());
+        const shifts = [...data.items].sort((a, b) => new Date(b.start || 0).getTime() - new Date(a.start || 0).getTime());
         setAllShifts(shifts);
         
         // Find active shift (has start but no stop)
@@ -153,7 +153,7 @@ function App() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <p className="text-gray-600 mb-4">Started: {new Date(activeShift.start).toLocaleString()}</p>
+            <p className="text-gray-600 mb-4">Started: {new Date(activeShift.start || 0).toLocaleString()}</p>
             <Button onClick={viewActiveShift} className="bg-success-600 hover:bg-success-700">
               View Active Shift
             </Button>
@@ -189,16 +189,16 @@ function App() {
                       <h3 className="text-lg font-medium text-gray-900 mb-3">{shift.name}</h3>
                       <div className="space-y-1 text-sm text-gray-600">
                         <p>
-                          <span className="font-medium">Started:</span> {new Date(shift.start).toLocaleString()}
+                          <span className="font-medium">Started:</span> {new Date(shift.start || 0).toLocaleString()}
                         </p>
                         {shift.stop && (
                           <p>
-                            <span className="font-medium">Ended:</span> {new Date(shift.stop).toLocaleString()}
+                            <span className="font-medium">Ended:</span> {new Date(shift.stop || 0).toLocaleString()}
                           </p>
                         )}
                         {shift.stop && (
                           <p>
-                            <span className="font-medium">Duration:</span> {Math.round((new Date(shift.stop).getTime() - new Date(shift.start).getTime()) / (1000 * 60))} minutes
+                            <span className="font-medium">Duration:</span> {Math.round((new Date(shift.stop || 0).getTime() - new Date(shift.start || 0).getTime()) / (1000 * 60))} minutes
                           </p>
                         )}
                       </div>

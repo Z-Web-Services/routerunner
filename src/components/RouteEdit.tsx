@@ -47,7 +47,7 @@ export default function RouteEdit({ route, onBack }: RouteEditProps) {
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  // const mediaRecorderRef = useRef<MediaRecorder | null>(null); // Unused for now
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -247,7 +247,7 @@ export default function RouteEdit({ route, onBack }: RouteEditProps) {
       setIsRecording(true);
     };
 
-    recognition.onresult = (event) => {
+    recognition.onresult = (event: any) => {
       const transcript = event.results[0][0].transcript;
       handleAddressInputChange(transcript);
       setIsRecording(false);
@@ -343,19 +343,19 @@ export default function RouteEdit({ route, onBack }: RouteEditProps) {
 
     if (addresses.length === 1) {
       // Single destination - simple search
-      const encodedAddress = encodeURIComponent(addresses[0].fullAddress);
+      const encodedAddress = encodeURIComponent(addresses[0].fullAddress || '');
       const url = `https://www.google.com/maps/search/?api=1&query=${encodedAddress}`;
       window.open(url, '_blank');
       return;
     }
 
     // Multiple addresses - use directions with waypoints
-    const origin = encodeURIComponent(addresses[0].fullAddress);
-    const destination = encodeURIComponent(addresses[addresses.length - 1].fullAddress);
+    const origin = encodeURIComponent(addresses[0].fullAddress || '');
+    const destination = encodeURIComponent(addresses[addresses.length - 1].fullAddress || '');
     
     // Middle addresses become waypoints
     const waypoints = addresses.slice(1, -1)
-      .map(addr => encodeURIComponent(addr.fullAddress))
+      .map(addr => encodeURIComponent(addr.fullAddress || ''))
       .join('|');
 
     let url = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}`;
