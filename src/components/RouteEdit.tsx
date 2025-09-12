@@ -63,11 +63,32 @@ export default function RouteEdit({ route, onBack }: RouteEditProps) {
     });
   }, [route.id]);
 
-  // Google Places Autocomplete integration
+  // Load Google Maps API dynamically
+  useEffect(() => {
+    const loadGoogleMapsAPI = () => {
+      if (window.google && window.google.maps) {
+        return; // Already loaded
+      }
+
+      const apiKey = import.meta.env.VITE_GOOGLE_PLACES_API_KEY;
+      if (!apiKey) {
+        console.warn('Google Places API key not configured');
+        return;
+      }
+
+      const script = document.createElement('script');
+      script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places`;
+      script.async = true;
+      script.defer = true;
+      document.head.appendChild(script);
+    };
+
+    loadGoogleMapsAPI();
+  }, []);
+
+  // Google Places Autocomplete integration using new AutocompleteSuggestion API
   async function fetchPlacePredictions(input: string) {
-    const apiKey = import.meta.env.VITE_GOOGLE_PLACES_API_KEY;
-    
-    if (!apiKey || input.trim().length < 3) {
+    if (!window.google || !window.google.maps || input.trim().length < 3) {
       setPlacePredictions([]);
       return;
     }
@@ -75,54 +96,120 @@ export default function RouteEdit({ route, onBack }: RouteEditProps) {
     setIsLoadingPredictions(true);
     
     try {
-      const response = await fetch(
-        `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(input)}&key=${apiKey}&types=address`
-      );
+      // Use the new AutocompleteSuggestion API (recommended as of March 2025)
+      const { suggestions } = await (window.google.maps.places as any).AutocompleteSuggestion.fetchAutocompleteSuggestions({
+        input: input,
+        includedPrimaryTypes: ['street_address', 'subpremise'],
+      });
       
-      const data = await response.json();
+      setIsLoadingPredictions(false);
       
-      if (data.status === 'OK') {
-        setPlacePredictions(data.predictions || []);
+      if (suggestions && suggestions.length > 0) {
+        const formattedPredictions = suggestions.map((suggestion: any) => ({
+          place_id: suggestion.placePrediction?.placeId || '',
+          description: suggestion.placePrediction?.text?.text || '',
+          structured_formatting: {
+            main_text: suggestion.placePrediction?.structuredFormat?.mainText?.text || suggestion.placePrediction?.text?.text || '',
+            secondary_text: suggestion.placePrediction?.structuredFormat?.secondaryText?.text || '',
+          }
+        }));
+        setPlacePredictions(formattedPredictions);
       } else {
         setPlacePredictions([]);
       }
     } catch (error) {
       console.error('Places Autocomplete error:', error);
       setPlacePredictions([]);
-    } finally {
       setIsLoadingPredictions(false);
+      
+      // Fallback to old API if new one fails
+      try {
+        const service = new window.google.maps.places.AutocompleteService();
+        
+        service.getPlacePredictions(
+          {
+            input: input,
+            types: ['address'],
+          },
+          (predictions, status) => {
+            setIsLoadingPredictions(false);
+            
+            if (status === window.google.maps.places.PlacesServiceStatus.OK && predictions) {
+              const formattedPredictions = predictions.map(prediction => ({
+                place_id: prediction.place_id,
+                description: prediction.description,
+                structured_formatting: {
+                  main_text: prediction.structured_formatting?.main_text || prediction.description,
+                  secondary_text: prediction.structured_formatting?.secondary_text || '',
+                }
+              }));
+              setPlacePredictions(formattedPredictions);
+            } else {
+              setPlacePredictions([]);
+            }
+          }
+        );
+      } catch (fallbackError) {
+        console.error('Fallback Places Autocomplete error:', fallbackError);
+        setPlacePredictions([]);
+        setIsLoadingPredictions(false);
+      }
     }
   }
 
-  // Get place details from place_id
+  // Get place details using new Place class API
   async function getPlaceDetails(placeId: string): Promise<string | null> {
-    const apiKey = import.meta.env.VITE_GOOGLE_PLACES_API_KEY;
-    
-    if (!apiKey) return null;
+    if (!window.google || !window.google.maps) return null;
     
     try {
-      const response = await fetch(
-        `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&fields=formatted_address&key=${apiKey}`
-      );
+      // Use the new Place class (recommended as of March 2025)
+      const { Place } = await window.google.maps.importLibrary('places') as google.maps.PlacesLibrary;
       
-      const data = await response.json();
+      const place = new Place({
+        id: placeId,
+        requestedLanguage: 'en',
+      });
       
-      if (data.status === 'OK' && data.result) {
-        return data.result.formatted_address;
-      }
+      await place.fetchFields({
+        fields: ['formattedAddress'],
+      });
+      
+      return place.formattedAddress || null;
     } catch (error) {
-      console.error('Place Details error:', error);
+      console.error('Error with new Place API:', error);
+      
+      // Fallback to old PlacesService
+      try {
+        return new Promise((resolve) => {
+          const service = new window.google.maps.places.PlacesService(
+            document.createElement('div')
+          );
+          
+          service.getDetails(
+            {
+              placeId: placeId,
+              fields: ['formatted_address'],
+            },
+            (place, status) => {
+              if (status === window.google.maps.places.PlacesServiceStatus.OK && place) {
+                resolve(place.formatted_address || null);
+              } else {
+                resolve(null);
+              }
+            }
+          );
+        });
+      } catch (fallbackError) {
+        console.error('Fallback PlacesService error:', fallbackError);
+        return null;
+      }
     }
-    
-    return null;
   }
 
   // Address validation using Places API
   async function validateAddress(address: string): Promise<AddressValidationResult> {
-    const apiKey = import.meta.env.VITE_GOOGLE_PLACES_API_KEY;
-    
-    if (!apiKey) {
-      console.warn('Google Places API key not configured');
+    if (!window.google || !window.google.maps) {
+      console.warn('Google Places API not loaded');
       return { isValid: true, formattedAddress: address.trim() };
     }
 
@@ -134,21 +221,25 @@ export default function RouteEdit({ route, onBack }: RouteEditProps) {
     }
 
     try {
-      // Use Places Autocomplete to validate
-      const response = await fetch(
-        `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(address)}&key=${apiKey}&types=address`
-      );
+      // Try new AutocompleteSuggestion API first
+      const { suggestions } = await (window.google.maps.places as any).AutocompleteSuggestion.fetchAutocompleteSuggestions({
+        input: address,
+        includedPrimaryTypes: ['street_address', 'subpremise'],
+      });
       
-      const data = await response.json();
-      
-      if (data.status === 'OK' && data.predictions && data.predictions.length > 0) {
-        // Get the first prediction's formatted address
-        const placeId = data.predictions[0].place_id;
-        const formattedAddress = await getPlaceDetails(placeId);
+      if (suggestions && suggestions.length > 0) {
+        const placeId = suggestions[0].placePrediction?.placeId;
+        let formattedAddress = suggestions[0].placePrediction?.text?.text || address;
+        
+        // Get more detailed address if we have a place ID
+        if (placeId) {
+          const detailedAddress = await getPlaceDetails(placeId);
+          formattedAddress = detailedAddress || formattedAddress;
+        }
         
         return {
           isValid: true,
-          formattedAddress: formattedAddress || data.predictions[0].description,
+          formattedAddress: formattedAddress,
         };
       } else {
         return {
@@ -157,11 +248,44 @@ export default function RouteEdit({ route, onBack }: RouteEditProps) {
         };
       }
     } catch (error) {
-      console.error('Address validation error:', error);
-      return {
-        isValid: false,
-        error: 'Failed to validate address - please check your connection',
-      };
+      console.error('Address validation error with new API:', error);
+      
+      // Fallback to old API
+      try {
+        const service = new window.google.maps.places.AutocompleteService();
+        
+        return new Promise((resolve) => {
+          service.getPlacePredictions(
+            {
+              input: address,
+              types: ['address'],
+            },
+            async (predictions, status) => {
+              if (status === window.google.maps.places.PlacesServiceStatus.OK && predictions && predictions.length > 0) {
+                // Get the first prediction's formatted address
+                const placeId = predictions[0].place_id;
+                const formattedAddress = await getPlaceDetails(placeId);
+                
+                resolve({
+                  isValid: true,
+                  formattedAddress: formattedAddress || predictions[0].description,
+                });
+              } else {
+                resolve({
+                  isValid: false,
+                  error: 'Address not found - please check spelling or try a different address',
+                });
+              }
+            }
+          );
+        });
+      } catch (fallbackError) {
+        console.error('Address validation fallback error:', fallbackError);
+        return {
+          isValid: false,
+          error: 'Failed to validate address - please check your connection',
+        };
+      }
     }
   }
 
@@ -189,10 +313,24 @@ export default function RouteEdit({ route, onBack }: RouteEditProps) {
   
   // Handle selecting a place prediction
   async function selectPlacePrediction(prediction: PlacePrediction) {
-    const formattedAddress = await getPlaceDetails(prediction.place_id);
-    setAddressInput(formattedAddress || prediction.description);
+    console.log('Selecting prediction:', prediction);
+    
+    // Immediately set the description to show something in the input
+    setAddressInput(prediction.description);
     setShowPredictions(false);
     setPlacePredictions([]);
+    
+    // Try to get more detailed address in the background
+    try {
+      const formattedAddress = await getPlaceDetails(prediction.place_id);
+      if (formattedAddress && formattedAddress !== prediction.description) {
+        setAddressInput(formattedAddress);
+      }
+    } catch (error) {
+      console.error('Error getting place details:', error);
+      // Keep the original description if details fail
+    }
+    
     inputRef.current?.focus();
   }
   
@@ -433,7 +571,10 @@ export default function RouteEdit({ route, onBack }: RouteEditProps) {
                     <button
                       key={prediction.place_id}
                       type="button"
-                      onClick={() => selectPlacePrediction(prediction)}
+                      onMouseDown={(e) => {
+                        e.preventDefault(); // Prevent onBlur from firing first
+                        selectPlacePrediction(prediction);
+                      }}
                       className="w-full text-left p-3 hover:bg-gray-100 border-b border-gray-100 last:border-b-0 focus:outline-none focus:bg-gray-100"
                     >
                       <div className="font-medium text-sm text-gray-900">

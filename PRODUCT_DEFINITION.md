@@ -194,25 +194,59 @@ User (Cognito)
 ## API Configuration Requirements
 
 ### Google Places API Setup
-To enable the intelligent address autocomplete functionality:
+To enable the intelligent address autocomplete functionality, you must configure multiple Google Cloud APIs:
 
+#### **Required APIs to Enable:**
 1. **Create Google Cloud Project**: Set up a new project in Google Cloud Console
-2. **Enable APIs**: Activate the following APIs:
-   - Places API (Autocomplete)
-   - Places API (Details)
+2. **Enable Required APIs**: Activate ALL of the following APIs:
+   - ✅ **Maps JavaScript API** (Required for Google Maps SDK)
+   - ✅ **Places API (New)** (Recommended for new customers as of March 2025)
+   - ✅ **Places API** (Legacy - kept for fallback compatibility)
+
+#### **API Key Configuration:**
 3. **Generate API Key**: Create a restricted API key with the following settings:
-   - **Application restrictions**: HTTP referrers (add your domain)
-   - **API restrictions**: Limit to Places API only
+   - **Application restrictions**: HTTP referrers (add your domain/localhost)
+   - **API restrictions**: Select all three APIs listed above
 4. **Environment Configuration**: Add API key to `.env.local`:
    ```
    VITE_GOOGLE_PLACES_API_KEY=your_api_key_here
    ```
 
+#### **Deployment Configuration:**
+5. **AWS Amplify Environment Variables**: 
+   - Go to Amplify Console > App Settings > Environment Variables
+   - Add: `VITE_GOOGLE_PLACES_API_KEY` = `your_api_key_here`
+
+### API Implementation Details
+- **Primary**: Uses new AutocompleteSuggestion API (March 2025 recommendation)
+- **Fallback**: Gracefully falls back to legacy AutocompleteService if needed
+- **Dynamic Loading**: Google Maps JavaScript SDK loaded on-demand
+- **Error Handling**: Robust error handling prevents API failures from breaking app
+
 ### API Costs & Limits
 - **Free Tier**: $200 monthly credit (covers ~40,000 autocomplete requests)
-- **Autocomplete**: $2.83 per 1,000 requests (after free tier)
-- **Place Details**: $17 per 1,000 requests (after free tier)
-- **Optimization**: Debounced input (300ms) minimizes API calls
+- **Places API (New)**: $2.83 per 1,000 autocomplete requests (after free tier)
+- **Place Details**: $17 per 1,000 requests (after free tier) 
+- **Maps JavaScript API**: Free for most use cases
+- **Optimization**: 300ms debounced input minimizes API calls
+
+### Common API Setup Issues & Solutions
+
+#### **Error: "ApiNotActivatedMapError"**
+- **Problem**: Maps JavaScript API not enabled
+- **Solution**: Enable "Maps JavaScript API" in Google Cloud Console > APIs & Services > Library
+
+#### **Error: "Requests to this API are blocked"**
+- **Problem**: Places API (New) not enabled
+- **Solution**: Enable "Places API (New)" in Google Cloud Console > APIs & Services > Library
+
+#### **Error: "API key not valid"**
+- **Problem**: API key restrictions too restrictive
+- **Solution**: Update API key restrictions to include all three required APIs
+
+#### **Error: "CORS policy"** 
+- **Problem**: Using direct HTTP calls instead of JavaScript SDK
+- **Solution**: RouteRunner uses JavaScript SDK (no CORS issues), ensure Maps JavaScript API is enabled
 
 ## Technical Requirements
 
