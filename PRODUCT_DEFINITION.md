@@ -42,7 +42,7 @@ RouteRunner eliminates the complexity of managing multi-stop deliveries by provi
 ### 3. Multi-Modal Address Input & Management
 - **Voice Input**: Speech-to-text address entry for hands-free operation with autocomplete
 - **Smart Text Input**: Real-time address suggestions powered by Google Places Autocomplete
-- **Camera OCR**: Extract addresses from documents/images using optical character recognition
+- **Camera OCR**: Extract addresses from mail letters and documents using Google Cloud Vision AI for high-accuracy text recognition
 - **Intelligent Address Validation**: Google Places API provides real-time suggestions, typo correction, and address standardization
 - **Interactive Autocomplete**: Dropdown suggestions with structured formatting (main text + secondary details)
 - **Debounced Search**: Optimized API calls with 300ms debounce for smooth user experience
@@ -176,20 +176,21 @@ User (Cognito)
 - **Authentication System**: AWS Cognito integration with secure user isolation
 - **Shift Management**: Full lifecycle from creation to completion with history
 - **Route Management**: Auto-generated naming and complete CRUD operations
-- **Multi-Modal Address Input**: Voice, text, and camera OCR functionality
-- **Google Places Autocomplete**: Real-time address suggestions with intelligent validation
+- **Multi-Modal Address Input**: Voice, text, and Google Vision AI camera OCR functionality
+- **Google Places Autocomplete**: Real-time address suggestions with intelligent validation and OCR integration
+- **Smart Address Extraction**: AI-powered pattern matching for mail letters with address normalization
 - **Address Notes System**: Add and edit notes inline for each address
 - **Google Maps Integration**: Route optimization with waypoint management
 - **Professional UI**: Tailwind CSS implementation with responsive design
 - **Navigation Flow**: Complete multi-page application flow
 
 ### 🔄 **In Progress**:
-- Camera OCR text extraction (placeholder implementation)
+- Enhanced photo management with cloud storage
+- Performance optimizations
 
 ### 📋 **Pending**:
-- Enhanced photo management with cloud storage
-- Advanced OCR integration (Tesseract.js or AWS Textract)
-- Performance optimizations
+- Advanced camera features (zoom, flash, image filters)
+- Offline OCR capabilities for areas with poor connectivity
 
 ## API Configuration Requirements
 
@@ -202,11 +203,12 @@ To enable the intelligent address autocomplete functionality, you must configure
    - ✅ **Maps JavaScript API** (Required for Google Maps SDK)
    - ✅ **Places API (New)** (Recommended for new customers as of March 2025)
    - ✅ **Places API** (Legacy - kept for fallback compatibility)
+   - ✅ **Cloud Vision API** (Required for high-accuracy OCR text extraction)
 
 #### **API Key Configuration:**
 3. **Generate API Key**: Create a restricted API key with the following settings:
    - **Application restrictions**: HTTP referrers (add your domain/localhost)
-   - **API restrictions**: Select all three APIs listed above
+   - **API restrictions**: Select all four APIs listed above
 4. **Environment Configuration**: Add API key to `.env.local`:
    ```
    VITE_GOOGLE_PLACES_API_KEY=your_api_key_here
@@ -224,9 +226,10 @@ To enable the intelligent address autocomplete functionality, you must configure
 - **Error Handling**: Robust error handling prevents API failures from breaking app
 
 ### API Costs & Limits
-- **Free Tier**: $200 monthly credit (covers ~40,000 autocomplete requests)
+- **Free Tier**: $200 monthly credit from Google Cloud
 - **Places API (New)**: $2.83 per 1,000 autocomplete requests (after free tier)
-- **Place Details**: $17 per 1,000 requests (after free tier) 
+- **Place Details**: $17 per 1,000 requests (after free tier)
+- **Cloud Vision API**: $1.50 per 1,000 text detection requests (first 1,000/month FREE)
 - **Maps JavaScript API**: Free for most use cases
 - **Optimization**: 300ms debounced input minimizes API calls
 
@@ -242,11 +245,45 @@ To enable the intelligent address autocomplete functionality, you must configure
 
 #### **Error: "API key not valid"**
 - **Problem**: API key restrictions too restrictive
-- **Solution**: Update API key restrictions to include all three required APIs
+- **Solution**: Update API key restrictions to include all four required APIs
 
 #### **Error: "CORS policy"** 
 - **Problem**: Using direct HTTP calls instead of JavaScript SDK
 - **Solution**: RouteRunner uses JavaScript SDK (no CORS issues), ensure Maps JavaScript API is enabled
+
+#### **Error: "Invalid included_primary_types"**
+- **Problem**: Using incorrect place types in AutocompleteSuggestion API
+- **Solution**: Use valid types: `['street_address', 'subpremise', 'premise']`
+
+### Google Cloud Vision OCR Implementation
+
+#### **Technology Decision: Google Vision API vs Alternatives**
+**Chosen Solution**: Google Cloud Vision API
+- **Accuracy**: ~95% vs Tesseract.js (~70%)
+- **Mobile Optimization**: Handles poor lighting, angles, shadows
+- **Cost Efficiency**: First 1,000 requests/month FREE
+- **Integration**: Uses same API key as Google Places
+
+#### **OCR Processing Pipeline**
+1. **Image Capture**: Mobile camera feed → HTML5 Canvas
+2. **Format Conversion**: Canvas → Base64 JPEG (80% quality)
+3. **Vision API Call**: Base64 → Google Cloud Vision TEXT_DETECTION
+4. **Address Extraction**: AI pattern matching for mail addresses
+5. **Address Normalization**: Abbreviation expansion (LN→Lane, ST→Street)
+6. **Autocomplete Integration**: Normalized address → Google Places suggestions
+
+#### **Smart Address Extraction Features**
+- **Pattern Recognition**: Identifies street addresses, PO Boxes, apartment numbers
+- **Multi-line Parsing**: Combines street address + city/state/ZIP from separate lines
+- **Noise Filtering**: Ignores names, phone numbers, non-address text
+- **Format Normalization**: Converts abbreviations for better autocomplete matching
+- **ZIP+4 Handling**: Removes extended ZIP codes that interfere with matching
+
+#### **Mail Processing Optimization**
+- **Target Use Case**: Extracting delivery addresses from mail letters
+- **Handles Mixed Content**: Names, addresses, return addresses on single document
+- **Intelligent Selection**: Automatically identifies recipient address vs sender
+- **Fallback Options**: Shows all extracted text if auto-detection fails
 
 ## Technical Requirements
 

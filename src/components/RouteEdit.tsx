@@ -10,6 +10,159 @@ import { Checkbox } from "@/components/ui/checkbox";
 
 const client = generateClient<Schema>();
 
+// Function to extract address from OCR text containing names and other information
+function extractAddressFromText(text: string): string | null {
+  // Clean up the text
+  const lines = text
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line.length > 0);
+  
+  // Address patterns to look for
+  const addressPatterns = [
+    // Street number + street name + street type
+    /^\d+\s+[A-Za-z\s]+(St|Street|Ave|Avenue|Rd|Road|Blvd|Boulevard|Dr|Drive|Ln|Lane|Ct|Court|Pl|Place|Way|Circle|Cir)\b/i,
+    // PO Box
+    /^P\.?O\.?\s*Box\s+\d+/i,
+    // Address with apartment/unit
+    /^\d+\s+[A-Za-z\s]+(St|Street|Ave|Avenue|Rd|Road|Blvd|Boulevard|Dr|Drive|Ln|Lane|Ct|Court|Pl|Place|Way|Circle|Cir)\s*(Apt|Apartment|Unit|#)\s*\w+/i
+  ];
+  
+  // State/ZIP patterns
+  const stateZipPattern = /\b[A-Z]{2}\s+\d{5}(-\d{4})?\b/;
+  
+  // City, State ZIP pattern  
+  const cityStateZipPattern = /^[A-Za-z\s]+,\s*[A-Z]{2}\s+\d{5}(-\d{4})?$/;
+  
+  let streetAddress = '';
+  let cityStateZip = '';
+  
+  // Find street address
+  for (const line of lines) {
+    for (const pattern of addressPatterns) {
+      if (pattern.test(line)) {
+        streetAddress = line;
+        break;
+      }
+    }
+    if (streetAddress) break;
+  }
+  
+  // Find city, state, zip
+  for (const line of lines) {
+    if (cityStateZipPattern.test(line) || stateZipPattern.test(line)) {
+      cityStateZip = line;
+      break;
+    }
+  }
+  
+  // If we found both parts, combine them
+  if (streetAddress && cityStateZip) {
+    return `${streetAddress}, ${cityStateZip}`.replace(/\s+/g, ' ').trim();
+  }
+  
+  // If we only found street address, check if the next line might be city/state/zip
+  if (streetAddress) {
+    const streetIndex = lines.findIndex(line => line === streetAddress);
+    if (streetIndex >= 0 && streetIndex < lines.length - 1) {
+      const nextLine = lines[streetIndex + 1];
+      if (cityStateZipPattern.test(nextLine) || stateZipPattern.test(nextLine)) {
+        return `${streetAddress}, ${nextLine}`.replace(/\s+/g, ' ').trim();
+      }
+    }
+    // Return just street address if no city/state/zip found
+    return streetAddress;
+  }
+  
+  // Look for any line that might be an address (has numbers and common words)
+  for (const line of lines) {
+    if (/\d+/.test(line) && 
+        /\b(st|street|ave|avenue|rd|road|blvd|boulevard|dr|drive|ln|lane|ct|court|pl|place|way|circle|cir)\b/i.test(line)) {
+      return line;
+    }
+  }
+  
+  return null;
+}
+
+// Function to normalize address format for better Google Places matching
+function normalizeAddressForAutocomplete(address: string): string {
+  return address
+    // Convert common abbreviations to full words for better matching
+    .replace(/\bLN\b/gi, 'Lane')
+    .replace(/\bST\b/gi, 'Street') 
+    .replace(/\bAVE\b/gi, 'Avenue')
+    .replace(/\bRD\b/gi, 'Road')
+    .replace(/\bDR\b/gi, 'Drive')
+    .replace(/\bBLVD\b/gi, 'Boulevard')
+    .replace(/\bCT\b/gi, 'Court')
+    .replace(/\bPL\b/gi, 'Place')
+    .replace(/\bCIR\b/gi, 'Circle')
+    // Remove extra ZIP+4 suffix which can interfere with matching
+    .replace(/(-\d{4})(?=\s*$)/, '')
+    // Clean up spacing
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Function to convert canvas to base64 for Google Vision API
+function canvasToBase64(canvas: HTMLCanvasElement): string {
+  return canvas.toDataURL('image/jpeg', 0.8).split(',')[1];
+}
+
+// Function to call Google Cloud Vision API for OCR
+async function performGoogleVisionOCR(base64Image: string): Promise<string> {
+  const apiKey = import.meta.env.VITE_GOOGLE_PLACES_API_KEY;
+  
+  if (!apiKey) {
+    throw new Error('Google API key not configured');
+  }
+
+  const visionApiUrl = `https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`;
+  
+  const requestBody = {
+    requests: [
+      {
+        image: {
+          content: base64Image
+        },
+        features: [
+          {
+            type: 'TEXT_DETECTION',
+            maxResults: 1
+          }
+        ]
+      }
+    ]
+  };
+
+  try {
+    const response = await fetch(visionApiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(requestBody)
+    });
+
+    if (!response.ok) {
+      throw new Error(`Vision API error: ${response.status} ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    
+    if (data.responses && data.responses[0] && data.responses[0].textAnnotations) {
+      const fullText = data.responses[0].textAnnotations[0]?.description || '';
+      return fullText;
+    } else {
+      throw new Error('No text detected in image');
+    }
+  } catch (error) {
+    console.error('Google Vision API error:', error);
+    throw error;
+  }
+}
+
 interface RouteEditProps {
   route: Schema["Route"]["type"];
   onBack: () => void;
@@ -44,6 +197,7 @@ export default function RouteEdit({ route, onBack }: RouteEditProps) {
   const [placePredictions, setPlacePredictions] = useState<PlacePrediction[]>([]);
   const [showPredictions, setShowPredictions] = useState(false);
   const [isLoadingPredictions, setIsLoadingPredictions] = useState(false);
+  const [isProcessingOCR, setIsProcessingOCR] = useState(false);
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -99,7 +253,8 @@ export default function RouteEdit({ route, onBack }: RouteEditProps) {
       // Use the new AutocompleteSuggestion API (recommended as of March 2025)
       const { suggestions } = await (window.google.maps.places as any).AutocompleteSuggestion.fetchAutocompleteSuggestions({
         input: input,
-        includedPrimaryTypes: ['street_address', 'subpremise'],
+        includedPrimaryTypes: ['street_address', 'subpremise', 'premise'],
+        includedRegionCodes: ['US'], // Focus on US addresses
       });
       
       setIsLoadingPredictions(false);
@@ -130,6 +285,7 @@ export default function RouteEdit({ route, onBack }: RouteEditProps) {
           {
             input: input,
             types: ['address'],
+            componentRestrictions: { country: 'us' },
           },
           (predictions, status) => {
             setIsLoadingPredictions(false);
@@ -430,15 +586,52 @@ export default function RouteEdit({ route, onBack }: RouteEditProps) {
       canvas.height = video.videoHeight;
       context.drawImage(video, 0, 0);
       
-      // This is a placeholder for OCR processing
-      // You would need to integrate with an OCR service like Tesseract.js or AWS Textract
-      const mockExtractedText = "123 Main Street, Anytown, ST 12345";
-      handleAddressInputChange(mockExtractedText);
+      setIsProcessingOCR(true);
       
-      // Stop camera
-      const stream = video.srcObject as MediaStream;
-      stream.getTracks().forEach(track => track.stop());
-      video.srcObject = null;
+      try {
+        // Convert canvas to base64 for Google Vision API
+        const base64Image = canvasToBase64(canvas);
+        
+        // Process image with Google Cloud Vision API
+        const text = await performGoogleVisionOCR(base64Image);
+
+        console.log("Google Vision OCR extracted text:", text);
+
+        // Extract address from the full text
+        const extractedAddress = extractAddressFromText(text);
+        
+        if (extractedAddress) {
+          // Normalize the address for better autocomplete matching
+          const normalizedAddress = normalizeAddressForAutocomplete(extractedAddress);
+          console.log("Original extracted address:", extractedAddress);
+          console.log("Normalized address:", normalizedAddress);
+          handleAddressInputChange(normalizedAddress);
+        } else {
+          // Fallback: show all text for manual selection
+          const cleanedText = text
+            .replace(/\n+/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+          
+          if (cleanedText) {
+            handleAddressInputChange(cleanedText);
+            alert('Address auto-detection failed. Please edit the extracted text to keep only the address.');
+          } else {
+            alert('No text detected in the image. Please try again with a clearer image.');
+          }
+        }
+      } catch (error) {
+        console.error('OCR processing error:', error);
+        alert('Failed to extract text from image. Please try again.');
+      } finally {
+        setIsProcessingOCR(false);
+        
+        // Stop camera
+        const stream = video.srcObject as MediaStream;
+        stream.getTracks().forEach(track => track.stop());
+        video.srcObject = null;
+        setInputMethod('text');
+      }
     }
   }
 
@@ -615,10 +808,17 @@ export default function RouteEdit({ route, onBack }: RouteEditProps) {
                 <Label>Camera Capture</Label>
                 <video ref={videoRef} className="w-full max-w-md border rounded-lg" />
                 <canvas ref={canvasRef} className="hidden" />
+                <div className="text-sm text-gray-600 mt-2">
+                  📸 Position the mail clearly in view. Google Vision AI will extract text automatically - no need for perfect alignment!
+                </div>
               </div>
               <div className="flex gap-2">
-                <Button onClick={captureAndProcessImage} variant="outline">
-                  📸 Capture & Extract Text
+                <Button 
+                  onClick={captureAndProcessImage} 
+                  disabled={isProcessingOCR}
+                  variant="outline"
+                >
+                  {isProcessingOCR ? '🔄 Processing...' : '📸 Capture & Extract Text'}
                 </Button>
                 <Button onClick={() => {
                   // Stop camera
@@ -634,7 +834,11 @@ export default function RouteEdit({ route, onBack }: RouteEditProps) {
               </div>
             </div>
 
-            <Button onClick={handleAddAddress} disabled={isValidating || !addressInput.trim()} className="w-full">
+            <Button 
+              onClick={handleAddAddress} 
+              disabled={isValidating || !addressInput.trim()} 
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+            >
               {isValidating ? 'Validating...' : 'Add Address'}
             </Button>
           </div>
