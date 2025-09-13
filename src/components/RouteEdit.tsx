@@ -85,6 +85,44 @@ function extractAddressFromText(text: string): string | null {
   return null;
 }
 
+// Function to resize image for cost efficiency
+function resizeImage(canvas: HTMLCanvasElement, maxWidth: number = 800, maxHeight: number = 600, quality: number = 0.7): string {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return canvas.toDataURL('image/jpeg', quality);
+
+  const { width, height } = canvas;
+  
+  // Calculate new dimensions while maintaining aspect ratio
+  let newWidth = width;
+  let newHeight = height;
+  
+  if (width > height) {
+    if (width > maxWidth) {
+      newWidth = maxWidth;
+      newHeight = (height * maxWidth) / width;
+    }
+  } else {
+    if (height > maxHeight) {
+      newHeight = maxHeight;
+      newWidth = (width * maxHeight) / height;
+    }
+  }
+  
+  // Create a new canvas for the resized image
+  const resizedCanvas = document.createElement('canvas');
+  const resizedCtx = resizedCanvas.getContext('2d');
+  
+  if (!resizedCtx) return canvas.toDataURL('image/jpeg', quality);
+  
+  resizedCanvas.width = newWidth;
+  resizedCanvas.height = newHeight;
+  
+  // Draw the resized image
+  resizedCtx.drawImage(canvas, 0, 0, newWidth, newHeight);
+  
+  return resizedCanvas.toDataURL('image/jpeg', quality);
+}
+
 // Function to normalize address format for better Google Places matching
 function normalizeAddressForAutocomplete(address: string): string {
   return address
@@ -185,6 +223,7 @@ interface PlacePrediction {
 
 export default function RouteEdit({ route, onBack }: RouteEditProps) {
   const [addresses, setAddresses] = useState<Array<Schema["Address"]["type"]>>([]);
+  const [pictures, setPictures] = useState<Array<Schema["Picture"]["type"]>>([]);
   const [loading, setLoading] = useState(true);
   const [addressInput, setAddressInput] = useState("");
   const [notesInput, setNotesInput] = useState("");
@@ -198,14 +237,24 @@ export default function RouteEdit({ route, onBack }: RouteEditProps) {
   const [showPredictions, setShowPredictions] = useState(false);
   const [isLoadingPredictions, setIsLoadingPredictions] = useState(false);
   const [isProcessingOCR, setIsProcessingOCR] = useState(false);
+  const [photoMode, setPhotoMode] = useState<{ addressId: string; isActive: boolean } | null>(null);
+  const [capturedPhotos, setCapturedPhotos] = useState<{ [addressId: string]: string[] }>({});
+  const [viewingPhoto, setViewingPhoto] = useState<{ src: string; addressId: string; index: number } | null>(null);
+  const [editingGalleryNotes, setEditingGalleryNotes] = useState(false);
+  const [galleryNotesInput, setGalleryNotesInput] = useState("");
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const photoVideoRef = useRef<HTMLVideoElement>(null);
+  const photoCanvasRef = useRef<HTMLCanvasElement>(null);
   // const mediaRecorderRef = useRef<MediaRecorder | null>(null); // Unused for now
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    // Debug: Check what models are available
+    console.log('Available client models:', Object.keys(client.models));
+    
     // Load addresses for this route
     client.models.Address.observeQuery({
       filter: { routeId: { eq: route.id } }
@@ -216,6 +265,24 @@ export default function RouteEdit({ route, onBack }: RouteEditProps) {
       },
     });
   }, [route.id]);
+
+  useEffect(() => {
+    // Load pictures for all addresses in this route
+    const loadPictures = async () => {
+      if (addresses.length === 0) return;
+      
+      try {
+        const addressIds = addresses.map(addr => addr.id);
+        const { data: picturesData } = await client.models.Picture.list();
+        const filteredPictures = picturesData?.filter(pic => pic.addressId && addressIds.includes(pic.addressId)) || [];
+        setPictures(filteredPictures);
+      } catch (error) {
+        console.error('Error loading pictures:', error);
+      }
+    };
+
+    loadPictures();
+  }, [addresses]);
 
   // Load Google Maps API dynamically
   useEffect(() => {
@@ -239,6 +306,74 @@ export default function RouteEdit({ route, onBack }: RouteEditProps) {
 
     loadGoogleMapsAPI();
   }, []);
+
+  // Initialize camera when photo mode becomes active
+  useEffect(() => {
+    if (photoMode?.isActive && photoVideoRef.current) {
+      const initializeCamera = async () => {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ 
+            video: { 
+              facingMode: 'environment',
+              width: { ideal: 1920 },
+              height: { ideal: 1080 }
+            } 
+          });
+          
+          console.log('Camera stream obtained in useEffect:', stream);
+          
+          if (photoVideoRef.current) {
+            photoVideoRef.current.srcObject = stream;
+            await photoVideoRef.current.play();
+            console.log('Camera initialized successfully');
+          }
+        } catch (error) {
+          console.error('Error initializing camera in useEffect:', error);
+          alert(`Camera access failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+          setPhotoMode(null);
+        }
+      };
+      
+      initializeCamera();
+    }
+  }, [photoMode?.isActive]);
+
+  // Keyboard navigation for photo gallery
+  useEffect(() => {
+    if (!viewingPhoto) return;
+
+    const handleKeydown = (e: KeyboardEvent) => {
+      // Don't handle keyboard shortcuts if editing notes
+      if (editingGalleryNotes) return;
+      
+      switch (e.key) {
+        case 'ArrowLeft':
+          e.preventDefault();
+          navigatePhoto('prev');
+          break;
+        case 'ArrowRight':
+          e.preventDefault();
+          navigatePhoto('next');
+          break;
+        case 'Escape':
+          e.preventDefault();
+          setViewingPhoto(null);
+          setEditingGalleryNotes(false);
+          setGalleryNotesInput("");
+          break;
+        case 'Delete':
+        case 'Backspace':
+          e.preventDefault();
+          if (e.shiftKey) { // Require shift+delete to prevent accidental deletion
+            deletePhoto(viewingPhoto.addressId, viewingPhoto.index);
+          }
+          break;
+      }
+    };
+
+    document.addEventListener('keydown', handleKeydown);
+    return () => document.removeEventListener('keydown', handleKeydown);
+  }, [viewingPhoto, editingGalleryNotes]);
 
   // Google Places Autocomplete integration using new AutocompleteSuggestion API
   async function fetchPlacePredictions(input: string) {
@@ -666,6 +801,213 @@ export default function RouteEdit({ route, onBack }: RouteEditProps) {
     setTempNotes("");
   }
 
+  // Photo capture functions for addresses
+  function startPhotoCapture(addressId: string) {
+    console.log('Starting photo capture for address:', addressId);
+    
+    // Check if camera is available
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      alert('Camera not supported on this device');
+      return;
+    }
+
+    // Activate photo mode - camera will be initialized by useEffect
+    setPhotoMode({ addressId, isActive: true });
+  }
+
+  function stopPhotoCapture() {
+    console.log('Stopping photo capture');
+    
+    if (photoVideoRef.current?.srcObject) {
+      const stream = photoVideoRef.current.srcObject as MediaStream;
+      stream.getTracks().forEach(track => track.stop());
+      photoVideoRef.current.srcObject = null;
+    }
+    setPhotoMode(null);
+  }
+
+  async function captureDeliveryPhoto() {
+    console.log('Capturing delivery photo');
+    
+    if (!photoVideoRef.current || !photoCanvasRef.current || !photoMode) {
+      console.error('Missing refs or photo mode not active');
+      return;
+    }
+
+    const canvas = photoCanvasRef.current;
+    const video = photoVideoRef.current;
+    const context = canvas.getContext('2d');
+
+    if (context) {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      context.drawImage(video, 0, 0);
+      
+      // Resize image for cost efficiency (max 800x600, 70% quality)
+      const resizedPhotoDataUrl = resizeImage(canvas, 800, 600, 0.7);
+      
+      console.log(`Original size: ${video.videoWidth}x${video.videoHeight}, Resized for efficiency`);
+      
+      try {
+        console.log('Attempting to save photo to database...');
+        console.log('Address ID:', photoMode.addressId);
+        console.log('Photo data length:', resizedPhotoDataUrl.length);
+        
+        // Check if Picture model is available
+        if (!client.models.Picture) {
+          throw new Error('Picture model not available in client');
+        }
+        
+        // Save photo to database
+        const { data: newPicture, errors } = await client.models.Picture.create({
+          url: resizedPhotoDataUrl,
+          description: `Delivery photo taken at ${new Date().toLocaleString()}`,
+          addressId: photoMode.addressId,
+        });
+        
+        console.log('Database response:', { data: newPicture, errors });
+        
+        if (newPicture && !errors) {
+          // Update local pictures state
+          setPictures(prev => {
+            const updated = [...prev, newPicture];
+            console.log('Updated pictures state:', updated.length, 'total pictures');
+            console.log('Pictures for this address:', updated.filter(p => p.addressId === photoMode.addressId).length);
+            return updated;
+          });
+          console.log('Photo saved to database successfully for address:', photoMode.addressId);
+          alert('Photo captured and saved to database! Take another or click Done when finished.');
+        } else {
+          throw new Error('Failed to save picture: ' + JSON.stringify(errors));
+        }
+      } catch (error) {
+        console.error('Error saving photo to database:', error);
+        console.error('Error details:', JSON.stringify(error, null, 2));
+        
+        // Fallback to local storage
+        setCapturedPhotos(prev => ({
+          ...prev,
+          [photoMode.addressId]: [
+            ...(prev[photoMode.addressId] || []),
+            resizedPhotoDataUrl
+          ]
+        }));
+        alert('Photo captured (saved locally due to database error)! Take another or click Done when finished.');
+      }
+    } else {
+      console.error('Could not get canvas context');
+    }
+  }
+
+  async function deletePhoto(addressId: string, photoIndex: number) {
+    const addressPictures = getPicturesForAddress(addressId);
+    
+    try {
+      // Check if it's a database picture or local photo
+      if (photoIndex < addressPictures.length) {
+        // Delete from database
+        const pictureToDelete = addressPictures[photoIndex];
+        await client.models.Picture.delete({ id: pictureToDelete.id });
+        
+        // Update local pictures state
+        setPictures(prev => prev.filter(pic => pic.id !== pictureToDelete.id));
+        console.log('Photo deleted from database');
+      } else {
+        // Delete from local storage (fallback photos)
+        const localIndex = photoIndex - addressPictures.length;
+        setCapturedPhotos(prev => ({
+          ...prev,
+          [addressId]: prev[addressId]?.filter((_, index) => index !== localIndex) || []
+        }));
+        console.log('Photo deleted from local storage');
+      }
+      
+      // Close photo viewer if the deleted photo is currently being viewed
+      if (viewingPhoto && viewingPhoto.addressId === addressId && viewingPhoto.index === photoIndex) {
+        setViewingPhoto(null);
+      }
+      
+      // Update photo viewer index if a photo before the current one was deleted
+      if (viewingPhoto && viewingPhoto.addressId === addressId && viewingPhoto.index > photoIndex) {
+        setViewingPhoto(prev => prev ? { ...prev, index: prev.index - 1 } : null);
+      }
+    } catch (error) {
+      console.error('Error deleting photo:', error);
+      alert('Failed to delete photo');
+    }
+  }
+
+  function navigatePhoto(direction: 'prev' | 'next') {
+    if (!viewingPhoto) return;
+    
+    const allPhotos = getAllPhotosForAddress(viewingPhoto.addressId);
+    const currentIndex = viewingPhoto.index;
+    
+    let newIndex = currentIndex;
+    if (direction === 'prev') {
+      newIndex = currentIndex > 0 ? currentIndex - 1 : allPhotos.length - 1;
+    } else {
+      newIndex = currentIndex < allPhotos.length - 1 ? currentIndex + 1 : 0;
+    }
+    
+    setViewingPhoto({
+      ...viewingPhoto,
+      index: newIndex,
+      src: allPhotos[newIndex]
+    });
+  }
+
+  function getAllPhotosForAddress(addressId: string) {
+    const databasePictures = getPicturesForAddress(addressId).map(pic => pic.url || '');
+    const localPhotos = capturedPhotos[addressId] || [];
+    const allPhotos = [...databasePictures, ...localPhotos];
+    console.log(`getAllPhotosForAddress(${addressId}):`, {
+      databaseCount: databasePictures.length,
+      localCount: localPhotos.length,
+      totalCount: allPhotos.length,
+      totalPicturesInState: pictures.length
+    });
+    return allPhotos;
+  }
+
+  function getCurrentAddress() {
+    if (!viewingPhoto) return null;
+    return addresses.find(addr => addr.id === viewingPhoto.addressId);
+  }
+
+  function getPicturesForAddress(addressId: string) {
+    const filtered = pictures.filter(pic => pic.addressId === addressId);
+    console.log(`getPicturesForAddress(${addressId}): found ${filtered.length} pictures out of ${pictures.length} total`);
+    return filtered;
+  }
+
+  function startEditingGalleryNotes() {
+    const currentAddress = getCurrentAddress();
+    setGalleryNotesInput(currentAddress?.notes || "");
+    setEditingGalleryNotes(true);
+  }
+
+  async function saveGalleryNotes() {
+    if (!viewingPhoto) return;
+    
+    try {
+      await client.models.Address.update({
+        id: viewingPhoto.addressId,
+        notes: galleryNotesInput.trim(),
+      });
+      setEditingGalleryNotes(false);
+      setGalleryNotesInput("");
+    } catch (error) {
+      console.error('Error updating notes from gallery:', error);
+      alert('Failed to save notes');
+    }
+  }
+
+  function cancelEditingGalleryNotes() {
+    setEditingGalleryNotes(false);
+    setGalleryNotesInput("");
+  }
+
   function constructGoogleMapsURL() {
     if (addresses.length === 0) {
       alert('No addresses to navigate to');
@@ -916,17 +1258,71 @@ export default function RouteEdit({ route, onBack }: RouteEditProps) {
                           )}
                         </div>
                       )}
+
+                      {/* Photo Section */}
+                      <div className="mt-3">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Button 
+                            onClick={() => startPhotoCapture(address.id)}
+                            size="sm"
+                            variant="outline"
+                            className="text-xs"
+                            disabled={photoMode?.isActive}
+                          >
+                            📷 Take Delivery Photo
+                          </Button>
+                          {(() => {
+                            const totalPhotos = getAllPhotosForAddress(address.id).length;
+                            return totalPhotos > 0 && (
+                              <span className="text-xs text-gray-500">
+                                {totalPhotos} photo{totalPhotos !== 1 ? 's' : ''}
+                              </span>
+                            );
+                          })()}
+                        </div>
+                        
+                        {/* Display all photos (database + local) */}
+                        {(() => {
+                          const allPhotos = getAllPhotosForAddress(address.id);
+                          return allPhotos.length > 0 && (
+                            <div className="grid grid-cols-2 gap-2 mt-2">
+                              {allPhotos.map((photo, photoIndex) => (
+                                <div key={photoIndex} className="relative">
+                                  <img 
+                                    src={photo} 
+                                    alt={`Delivery photo ${photoIndex + 1}`}
+                                    className="w-full h-24 object-cover rounded border cursor-pointer hover:opacity-80 transition-opacity"
+                                    onClick={() => setViewingPhoto({ src: photo, addressId: address.id, index: photoIndex })}
+                                  />
+                                  <Button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      deletePhoto(address.id, photoIndex);
+                                    }}
+                                    size="sm"
+                                    variant="destructive"
+                                    className="absolute top-1 right-1 w-6 h-6 p-0 text-xs"
+                                  >
+                                    ×
+                                  </Button>
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    </div>
+
+                    <div className="flex gap-2 mt-3">
+                      <Button 
+                        onClick={() => deleteAddress(address.id)}
+                        variant="destructive"
+                        size="sm"
+                      >
+                        Delete
+                      </Button>
                     </div>
                   </div>
-                  
-                    <Button 
-                      onClick={() => deleteAddress(address.id)}
-                      variant="destructive"
-                      size="sm"
-                      className="ml-4"
-                    >
-                      Delete
-                    </Button>
                   </div>
                 </CardContent>
               </Card>
@@ -973,6 +1369,192 @@ export default function RouteEdit({ route, onBack }: RouteEditProps) {
           </Card>
         )}
       </Card>
+
+      {/* Photo Capture Overlay */}
+      {photoMode?.isActive && (
+        <div className="fixed inset-0 bg-black bg-opacity-90 z-50 flex flex-col">
+          <div className="flex justify-between items-center p-4 text-white">
+            <h3 className="text-lg font-semibold">
+              Taking delivery photo for address #{addresses.findIndex(a => a.id === photoMode.addressId) + 1}
+            </h3>
+            <Button onClick={stopPhotoCapture} variant="outline" size="sm">
+              Done
+            </Button>
+          </div>
+          
+          <div className="flex-1 flex flex-col items-center justify-center p-4">
+            <video 
+              ref={photoVideoRef} 
+              className="w-full max-w-md border rounded-lg mb-4" 
+              autoPlay 
+              playsInline
+            />
+            <canvas ref={photoCanvasRef} className="hidden" />
+            
+            <div className="flex gap-4">
+              <Button 
+                onClick={captureDeliveryPhoto}
+                className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3"
+                size="lg"
+              >
+                📸 Capture Photo
+              </Button>
+            </div>
+            
+            <div className="text-white text-sm mt-4 text-center">
+              Position the delivery (food, package, etc.) clearly in view and tap Capture Photo
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Photo Gallery Modal */}
+      {viewingPhoto && (() => {
+        const currentAddress = getCurrentAddress();
+        const photos = getAllPhotosForAddress(viewingPhoto.addressId);
+        const hasMultiplePhotos = photos.length > 1;
+        
+        return (
+          <div className="fixed inset-0 bg-black bg-opacity-95 z-50 flex flex-col">
+            {/* Header with address info */}
+            <div className="flex justify-between items-start p-4 text-white border-b border-gray-700">
+              <div className="flex-1 mr-4">
+                <h3 className="text-lg font-semibold mb-1">
+                  📍 Address #{addresses.findIndex(a => a.id === viewingPhoto.addressId) + 1}
+                </h3>
+                <p className="text-sm text-gray-300 mb-2">
+                  {currentAddress?.fullAddress}
+                </p>
+                
+                {/* Notes display/edit section */}
+                <div className="mt-2">
+                  {editingGalleryNotes ? (
+                    <div className="space-y-2">
+                      <Textarea
+                        value={galleryNotesInput}
+                        onChange={(e) => setGalleryNotesInput(e.target.value)}
+                        placeholder="Enter delivery notes..."
+                        rows={2}
+                        className="text-black text-sm"
+                      />
+                      <div className="flex gap-2">
+                        <Button 
+                          onClick={saveGalleryNotes}
+                          size="sm"
+                          className="bg-green-600 hover:bg-green-700 text-white text-xs"
+                        >
+                          Save Notes
+                        </Button>
+                        <Button 
+                          onClick={cancelEditingGalleryNotes}
+                          size="sm"
+                          variant="outline"
+                          className="text-xs"
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      {currentAddress?.notes ? (
+                        <div className="space-y-2">
+                          <div className="bg-gray-800 p-2 rounded text-xs text-gray-200">
+                            📝 {currentAddress.notes}
+                          </div>
+                          <Button 
+                            onClick={startEditingGalleryNotes}
+                            size="sm"
+                            variant="outline"
+                            className="text-xs"
+                          >
+                            ✏️ Edit Notes
+                          </Button>
+                        </div>
+                      ) : (
+                        <Button 
+                          onClick={startEditingGalleryNotes}
+                          size="sm"
+                          variant="outline"
+                          className="text-xs"
+                        >
+                          📝 Add Notes
+                        </Button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <Button 
+                  onClick={() => deletePhoto(viewingPhoto.addressId, viewingPhoto.index)}
+                  variant="destructive" 
+                  size="sm"
+                >
+                  🗑️ Delete Photo
+                </Button>
+                <Button onClick={() => {
+                  setViewingPhoto(null);
+                  setEditingGalleryNotes(false);
+                  setGalleryNotesInput("");
+                }} variant="outline" size="sm" className="text-white border-white hover:bg-white hover:text-black">
+                  ✕ Close
+                </Button>
+              </div>
+            </div>
+            
+            {/* Photo display area with navigation */}
+            <div className="flex-1 flex items-center justify-center relative">
+              {/* Previous button */}
+              {hasMultiplePhotos && (
+                <Button
+                  onClick={() => navigatePhoto('prev')}
+                  className="absolute left-4 z-10 bg-black bg-opacity-50 hover:bg-opacity-75 text-white rounded-full w-12 h-12 p-0"
+                  size="sm"
+                >
+                  ←
+                </Button>
+              )}
+              
+              {/* Photo */}
+              <div className="flex flex-col items-center max-w-full max-h-full p-4">
+                <img 
+                  src={viewingPhoto.src} 
+                  alt={`Delivery photo ${viewingPhoto.index + 1}`}
+                  className="max-w-full max-h-[70vh] object-contain rounded border shadow-lg"
+                />
+                
+                {/* Photo counter */}
+                {hasMultiplePhotos && (
+                  <div className="mt-3 bg-black bg-opacity-50 px-3 py-1 rounded-full text-white text-sm">
+                    Photo {viewingPhoto.index + 1} of {photos.length}
+                  </div>
+                )}
+              </div>
+              
+              {/* Next button */}
+              {hasMultiplePhotos && (
+                <Button
+                  onClick={() => navigatePhoto('next')}
+                  className="absolute right-4 z-10 bg-black bg-opacity-50 hover:bg-opacity-75 text-white rounded-full w-12 h-12 p-0"
+                  size="sm"
+                >
+                  →
+                </Button>
+              )}
+            </div>
+            
+            {/* Footer with instructions */}
+            <div className="text-white text-sm p-4 text-center border-t border-gray-700">
+              {hasMultiplePhotos ? (
+                <span>← → Arrow keys or buttons to navigate • ESC to close • Shift+Delete to remove • Delivery verification photos</span>
+              ) : (
+                <span>ESC to close • Shift+Delete to remove • Delivery verification photo</span>
+              )}
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
